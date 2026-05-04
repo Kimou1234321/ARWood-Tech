@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary - Branded amber/wood palette -->
+    <color name="forest_green">#FFC7853E</color>
+    <color name="forest_green_light">#FFD79A52</color>
+    <color name="forest_green_dark">#FF8F5B28</color>
+    <color name="mint_green">#FFE8BC84</color>
+    <color name="pale_green">#FFF7E5CE</color>
+
+    <!-- Secondary - Dark wood tones -->
+    <color name="wood_brown">#FF7A4B1D</color>
+    <color name="wood_brown_light">#FFA56A32</color>
+    <color name="wood_brown_dark">#FF4B2C10</color>
+    <color name="sand_brown">#FFE2B67E</color>
+
+    <!-- Backgrounds -->
+    <color name="dark_forest">#FF0F0C09</color>
+    <color name="dark_forest_surface">#FF1A140F</color>
+    <color name="dark_forest_card">#FF241B13</color>
+
+    <!-- Accents -->
+    <color name="golden_amber">#FFE0A24F</color>
+    <color name="error_red">#FFEF5350</color>
+
+    <!-- Text -->
+    <color name="text_primary">#FFF3D9B7</color>
+    <color name="text_secondary">#FFD0A06A</color>
+    <color name="text_on_primary">#FF1A120A</color>
+</resources>

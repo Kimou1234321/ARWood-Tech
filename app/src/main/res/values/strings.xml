@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ARWood Tech</string>
+    <string name="login_title">Sign In</string>
+    <string name="login_username_hint">Username</string>
+    <string name="login_password_hint">Password</string>
+    <string name="login_button">Login</string>
+    <string name="login_error_empty">Please enter both username and password</string>
+    <string name="login_error_invalid">Invalid credentials. Use admin/admin</string>
+    <string name="home_subtitle">Select an option to measure wood volume</string>
+    <string name="import_title">Import Picture</string>
+    <string name="import_desc">Select a photo of stacked logs from your gallery</string>
+    <string name="camera_title">Take a Picture</string>
+    <string name="camera_desc">Capture logs directly with your camera</string>
+    <string name="calibration_title">Scale Calibration</string>
+    <string name="results_title">Analysis Results</string>
+    <string name="new_analysis">New Analysis</string>
+    <string name="version_label">v1.0.0 — Prototype</string>
+</resources>
