@@ -7,14 +7,19 @@ import androidx.navigation.compose.rememberNavController
 import com.algerianwood.app.data.SessionData
 import com.algerianwood.app.ui.calibration.CalibrationScreen
 import com.algerianwood.app.ui.camera.CameraScreen
+import com.algerianwood.app.ui.crop.CropScreen
 import com.algerianwood.app.ui.home.HomeScreen
 import com.algerianwood.app.ui.login.LoginScreen
+import com.algerianwood.app.ui.login.RegisterScreen
 import com.algerianwood.app.ui.results.ResultsScreen
+import com.algerianwood.app.ui.results.SavedAnalysesScreen
+import com.algerianwood.app.ui.results.SavedAnalysisDetailScreen
+import com.algerianwood.app.ui.theme.AppThemeMode
 
 /**
  * Central navigation graph for the app.
  *
- * Flow: Login → Home → (Camera | Gallery) → Calibration → Results
+ * Flow: Login → Home → (Camera | Gallery) → Crop → Calibration → Results
  *
  * Image and calibration data are passed via [SessionData] singleton
  * rather than navigation arguments to avoid URI encoding issues.
@@ -22,13 +27,20 @@ import com.algerianwood.app.ui.results.ResultsScreen
 object Routes {
     const val LOGIN = "login"
     const val HOME = "home"
+    const val REGISTER = "register"
     const val CAMERA = "camera"
+    const val CROP = "crop"
     const val CALIBRATION = "calibration"
     const val RESULTS = "results"
+    const val SAVED_ANALYSES = "saved_analyses"
+    const val SAVED_ANALYSIS_DETAIL = "saved_analysis_detail"
 }
 
 @Composable
-fun AppNavGraph() {
+fun AppNavGraph(
+    themeMode: AppThemeMode = AppThemeMode.NIGHT,
+    onToggleTheme: () -> Unit = {}
+) {
     val navController = rememberNavController()
 
     NavHost(
@@ -42,18 +54,31 @@ fun AppNavGraph() {
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.LOGIN) { inclusive = true }
                     }
-                }
+                },
+                onCreateAccount = { navController.navigate(Routes.REGISTER) }
+            )
+        }
+
+        composable(Routes.REGISTER) {
+            RegisterScreen(
+                onBack = { navController.popBackStack() },
+                onCreated = { navController.popBackStack() }
             )
         }
 
         // ── Home ──
         composable(Routes.HOME) {
             HomeScreen(
+                themeMode = themeMode,
+                onToggleTheme = onToggleTheme,
                 onImageReady = {
-                    navController.navigate(Routes.CALIBRATION)
+                    navController.navigate(Routes.CROP)
                 },
                 onTakePicture = {
                     navController.navigate(Routes.CAMERA)
+                },
+                onOpenSavedAnalyses = {
+                    navController.navigate(Routes.SAVED_ANALYSES)
                 }
             )
         }
@@ -62,13 +87,22 @@ fun AppNavGraph() {
         composable(Routes.CAMERA) {
             CameraScreen(
                 onImageCaptured = {
-                    navController.navigate(Routes.CALIBRATION) {
+                    navController.navigate(Routes.CROP) {
                         popUpTo(Routes.HOME)
                     }
                 },
                 onBack = {
                     navController.popBackStack()
                 }
+            )
+        }
+
+        composable(Routes.CROP) {
+            CropScreen(
+                onConfirm = {
+                    navController.navigate(Routes.CALIBRATION)
+                },
+                onBack = { navController.popBackStack() }
             )
         }
 
@@ -97,6 +131,20 @@ fun AppNavGraph() {
                     navController.popBackStack()
                 }
             )
+        }
+
+        composable(Routes.SAVED_ANALYSES) {
+            SavedAnalysesScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSaved = { id ->
+                    SessionData.selectedSavedAnalysisId = id
+                    navController.navigate(Routes.SAVED_ANALYSIS_DETAIL)
+                }
+            )
+        }
+
+        composable(Routes.SAVED_ANALYSIS_DETAIL) {
+            SavedAnalysisDetailScreen(onBack = { navController.popBackStack() })
         }
     }
 }

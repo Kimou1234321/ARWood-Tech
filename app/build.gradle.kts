@@ -51,6 +51,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 
     androidResources {
@@ -85,14 +88,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
-    // CameraX
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
+    // CameraX (1.4.x includes 16 KB page-size aligned native libs)
+    implementation("androidx.camera:camera-core:1.4.0")
+    implementation("androidx.camera:camera-camera2:1.4.0")
+    implementation("androidx.camera:camera-lifecycle:1.4.0")
+    implementation("androidx.camera:camera-view:1.4.0")
 
-    // TensorFlow Lite runtime
-    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    // LiteRT (Google AI Edge; replaces TensorFlow Lite runtime, 16 KB compatible JNI)
+    implementation("com.google.ai.edge.litert:litert:1.4.1")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     // Debug tooling

@@ -30,20 +30,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -56,16 +59,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.algerianwood.app.data.SessionData
-import com.algerianwood.app.ui.theme.DarkForest
-import com.algerianwood.app.ui.theme.DarkForestCard
-import com.algerianwood.app.ui.theme.ErrorRed
-import com.algerianwood.app.ui.theme.ForestGreen
-import com.algerianwood.app.ui.theme.ForestGreenLight
-import com.algerianwood.app.ui.theme.GoldenAmber
-import com.algerianwood.app.ui.theme.MintGreen
-import com.algerianwood.app.ui.theme.TextPrimary
-import com.algerianwood.app.ui.theme.TextSecondary
-import com.algerianwood.app.ui.theme.WoodBrownLight
+import com.algerianwood.app.ui.theme.LocalAppPalette
+import com.algerianwood.app.ui.common.TOUCH_TARGET_RADIUS_PX
+import com.algerianwood.app.ui.common.drawDragMagnifier
 import kotlin.math.max
 import kotlin.math.sqrt
 import kotlin.math.roundToInt
@@ -76,21 +72,31 @@ fun CalibrationScreen(
     onAnalyze: () -> Unit,
     onBack: () -> Unit
 ) {
+    val palette = LocalAppPalette.current
+    val colors = MaterialTheme.colorScheme
+    fun defaultThresholdForTiles(tiles: Int): Float = when (tiles) {
+        1 -> 50f
+        4 -> 40f
+        9 -> 30f
+        16 -> 20f
+        else -> 40f
+    }
+
     val bitmap = SessionData.imageBitmap
 
     if (bitmap == null) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DarkForest),
+                .background(colors.background),
             contentAlignment = androidx.compose.ui.Alignment.Center
         ) {
             Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                Text("No image loaded", color = ErrorRed, style = MaterialTheme.typography.titleMedium)
+                Text("No image loaded", color = palette.errorRed, style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = onBack,
-                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.forestGreen)
                 ) {
                     Text("Go Back")
                 }
@@ -110,6 +116,18 @@ fun CalibrationScreen(
     // Input values
     var distanceInput by remember { mutableStateOf("") }
     var logLengthInput by remember { mutableStateOf("") }
+    var tilesChoice by remember {
+        mutableIntStateOf(
+            when (SessionData.tilesCount) {
+                1 -> 1
+                4, 9, 16 -> SessionData.tilesCount
+                else -> 4
+            }
+        )
+    }
+    var modelThreshold by remember {
+        mutableFloatStateOf(SessionData.modelThresholdPercent.toFloat().coerceIn(0f, 100f))
+    }
     var showError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
 
@@ -123,9 +141,6 @@ fun CalibrationScreen(
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
 
-    // Grab radius in image coordinates for detecting near-point touches
-    val grabRadiusImg = 30f
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -136,13 +151,13 @@ fun CalibrationScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkForest,
-                    titleContentColor = TextPrimary,
-                    navigationIconContentColor = TextPrimary
+                    containerColor = colors.background,
+                    titleContentColor = colors.onBackground,
+                    navigationIconContentColor = colors.onBackground
                 )
             )
         },
-        containerColor = DarkForest
+        containerColor = colors.background
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -155,7 +170,7 @@ fun CalibrationScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = DarkForestCard.copy(alpha = 0.7f)
+                    containerColor = colors.surfaceVariant.copy(alpha = 0.7f)
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -166,7 +181,7 @@ fun CalibrationScreen(
                         else -> "✅ Both points placed! Drag to adjust, or enter distance below."
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (point1 != null && point2 != null) MintGreen else GoldenAmber,
+                    color = if (point1 != null && point2 != null) palette.mintGreen else palette.goldenAmber,
                     modifier = Modifier.padding(12.dp),
                     fontWeight = FontWeight.Medium
                 )
@@ -208,6 +223,14 @@ fun CalibrationScreen(
                             val x = ((pos.x - (baseOffsetX + panX)) / scale)
                             val y = ((pos.y - (baseOffsetY + panY)) / scale)
                             return Offset(x, y)
+                        }
+
+                        fun imageToCanvas(img: Offset): Offset {
+                            val scale = baseScale * zoom
+                            return Offset(
+                                img.x * scale + baseOffsetX + panX,
+                                img.y * scale + baseOffsetY + panY
+                            )
                         }
 
                         awaitEachGesture {
@@ -257,17 +280,25 @@ fun CalibrationScreen(
                                 val imgPos = canvasToImage(change.position)
 
                                 if (localDraggingPoint == null) {
-                                    val localGrabRadius = grabRadiusImg / zoom.coerceAtLeast(1f)
+                                    val canvasPos = change.position
                                     val distToP1 = point1?.let {
-                                        sqrt((imgPos.x - it.x) * (imgPos.x - it.x) + (imgPos.y - it.y) * (imgPos.y - it.y))
+                                        val dp = imageToCanvas(it)
+                                        sqrt(
+                                            (canvasPos.x - dp.x) * (canvasPos.x - dp.x) +
+                                                (canvasPos.y - dp.y) * (canvasPos.y - dp.y)
+                                        )
                                     } ?: Float.MAX_VALUE
                                     val distToP2 = point2?.let {
-                                        sqrt((imgPos.x - it.x) * (imgPos.x - it.x) + (imgPos.y - it.y) * (imgPos.y - it.y))
+                                        val dp = imageToCanvas(it)
+                                        sqrt(
+                                            (canvasPos.x - dp.x) * (canvasPos.x - dp.x) +
+                                                (canvasPos.y - dp.y) * (canvasPos.y - dp.y)
+                                        )
                                     } ?: Float.MAX_VALUE
 
                                     localDraggingPoint = when {
-                                        distToP1 < localGrabRadius && distToP1 <= distToP2 -> 1
-                                        distToP2 < localGrabRadius -> 2
+                                        distToP1 < TOUCH_TARGET_RADIUS_PX && distToP1 <= distToP2 -> 1
+                                        distToP2 < TOUCH_TARGET_RADIUS_PX -> 2
                                         else -> null
                                     }
                                     draggingPoint = localDraggingPoint
@@ -338,24 +369,23 @@ fun CalibrationScreen(
                     point1?.let { p ->
                         val dp = imgToCanvas(p)
                         val isDragging = draggingPoint == 1
-                        val outerRadius = if (isDragging) 22f else 16f
+                        val outerRadius = if (isDragging) 30f else 22f
 
-                        // Enlarged ring when dragging
-                        drawCircle(ForestGreenLight, outerRadius, dp)
-                        drawCircle(Color.White, 10f, dp)
-                        drawCircle(ForestGreenLight, 4f, dp)
+                        drawCircle(palette.forestGreenLight, outerRadius, dp)
+                        drawCircle(Color.White, 12f, dp)
+                        drawCircle(palette.forestGreenLight, 4f, dp)
 
                         // Crosshair lines for precision when dragging
                         if (isDragging) {
                             val crossLen = 40f
                             drawLine(
-                                ForestGreenLight.copy(alpha = 0.7f),
+                                palette.forestGreenLight.copy(alpha = 0.7f),
                                 Offset(dp.x - crossLen, dp.y),
                                 Offset(dp.x + crossLen, dp.y),
                                 strokeWidth = 1.5f
                             )
                             drawLine(
-                                ForestGreenLight.copy(alpha = 0.7f),
+                                palette.forestGreenLight.copy(alpha = 0.7f),
                                 Offset(dp.x, dp.y - crossLen),
                                 Offset(dp.x, dp.y + crossLen),
                                 strokeWidth = 1.5f
@@ -367,23 +397,23 @@ fun CalibrationScreen(
                     point2?.let { p ->
                         val dp = imgToCanvas(p)
                         val isDragging = draggingPoint == 2
-                        val outerRadius = if (isDragging) 22f else 16f
+                        val outerRadius = if (isDragging) 30f else 22f
 
-                        drawCircle(WoodBrownLight, outerRadius, dp)
-                        drawCircle(Color.White, 10f, dp)
-                        drawCircle(WoodBrownLight, 4f, dp)
+                        drawCircle(palette.woodBrownLight, outerRadius, dp)
+                        drawCircle(Color.White, 12f, dp)
+                        drawCircle(palette.woodBrownLight, 4f, dp)
 
                         // Crosshair lines for precision when dragging
                         if (isDragging) {
                             val crossLen = 40f
                             drawLine(
-                                WoodBrownLight.copy(alpha = 0.7f),
+                                palette.woodBrownLight.copy(alpha = 0.7f),
                                 Offset(dp.x - crossLen, dp.y),
                                 Offset(dp.x + crossLen, dp.y),
                                 strokeWidth = 1.5f
                             )
                             drawLine(
-                                WoodBrownLight.copy(alpha = 0.7f),
+                                palette.woodBrownLight.copy(alpha = 0.7f),
                                 Offset(dp.x, dp.y - crossLen),
                                 Offset(dp.x, dp.y + crossLen),
                                 strokeWidth = 1.5f
@@ -396,77 +426,25 @@ fun CalibrationScreen(
                         val dp1 = imgToCanvas(point1!!)
                         val dp2 = imgToCanvas(point2!!)
                         drawLine(
-                            color = GoldenAmber,
+                            color = palette.goldenAmber,
                             start = dp1,
                             end = dp2,
                             strokeWidth = 3f
                         )
                         val mid = Offset((dp1.x + dp2.x) / 2f, (dp1.y + dp2.y) / 2f)
                         drawCircle(Color.Black.copy(alpha = 0.5f), 18f, mid)
-                        drawCircle(GoldenAmber, 6f, mid)
+                        drawCircle(palette.goldenAmber, 6f, mid)
                     }
 
-                    // Drag magnifier for precision while moving a point
                     if (draggingPoint != null && dragPreviewPoint != null) {
                         val preview = dragPreviewPoint!!
-                        val anchor = imgToCanvas(preview)
-
-                        val windowSize = 224f
-                        val border = 2f
-                        val imagePad = 6f
-                        val windowX = (anchor.x - windowSize / 2f)
-                            .coerceIn(8f, size.width - windowSize - 8f)
-                        val preferredY = anchor.y - windowSize - 22f
-                        val windowY = if (preferredY < 8f) {
-                            (anchor.y + 22f).coerceAtMost(size.height - windowSize - 8f)
-                        } else {
-                            preferredY
-                        }
-
-                        val sampleSize = minOf(56, bmp.width, bmp.height).coerceAtLeast(8)
-                        val srcLeft = (preview.x - sampleSize / 2f)
-                            .coerceIn(0f, (bmp.width - sampleSize).toFloat())
-                            .roundToInt()
-                        val srcTop = (preview.y - sampleSize / 2f)
-                            .coerceIn(0f, (bmp.height - sampleSize).toFloat())
-                            .roundToInt()
-
-                        drawRoundRect(
-                            color = DarkForestCard.copy(alpha = 0.92f),
-                            topLeft = Offset(windowX, windowY),
-                            size = androidx.compose.ui.geometry.Size(windowSize, windowSize),
-                            cornerRadius = CornerRadius(14f, 14f)
-                        )
-
-                        val innerSize = (windowSize - imagePad * 2f).roundToInt()
-                        drawImage(
-                            image = bmpImage,
-                            srcOffset = IntOffset(srcLeft, srcTop),
-                            srcSize = IntSize(sampleSize, sampleSize),
-                            dstOffset = IntOffset((windowX + imagePad).roundToInt(), (windowY + imagePad).roundToInt()),
-                            dstSize = IntSize(innerSize, innerSize)
-                        )
-
-                        drawRoundRect(
-                            color = GoldenAmber,
-                            topLeft = Offset(windowX, windowY),
-                            size = androidx.compose.ui.geometry.Size(windowSize, windowSize),
-                            cornerRadius = CornerRadius(14f, 14f),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = border)
-                        )
-
-                        val center = Offset(windowX + windowSize / 2f, windowY + windowSize / 2f)
-                        drawLine(
-                            color = GoldenAmber,
-                            start = Offset(center.x - 12f, center.y),
-                            end = Offset(center.x + 12f, center.y),
-                            strokeWidth = 1.8f
-                        )
-                        drawLine(
-                            color = GoldenAmber,
-                            start = Offset(center.x, center.y - 12f),
-                            end = Offset(center.x, center.y + 12f),
-                            strokeWidth = 1.8f
+                        drawDragMagnifier(
+                            bitmap = bmpImage,
+                            previewImage = preview,
+                            anchorCanvas = imgToCanvas(preview),
+                            canvasSize = androidx.compose.ui.geometry.Size(size.width, size.height),
+                            imageWidth = bmp.width,
+                            imageHeight = bmp.height
                         )
                     }
                 }
@@ -477,7 +455,7 @@ fun CalibrationScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkForestCard),
+                colors = CardDefaults.cardColors(containerColor = colors.surfaceVariant),
                 shape = RoundedCornerShape(20.dp)
             ) {
                 Column(
@@ -497,7 +475,7 @@ fun CalibrationScreen(
                         Text(
                             text = "Pixel distance: ${pixelDist.toInt()} px",
                             style = MaterialTheme.typography.labelLarge,
-                            color = TextSecondary,
+                            color = colors.onSurfaceVariant,
                             modifier = Modifier.padding(bottom = 12.dp)
                         )
 
@@ -509,10 +487,10 @@ fun CalibrationScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = ForestGreenLight,
-                                unfocusedBorderColor = TextSecondary.copy(alpha = 0.5f),
-                                focusedLabelColor = ForestGreenLight,
-                                cursorColor = ForestGreenLight
+                                focusedBorderColor = palette.forestGreenLight,
+                                unfocusedBorderColor = colors.onSurfaceVariant.copy(alpha = 0.5f),
+                                focusedLabelColor = palette.forestGreenLight,
+                                cursorColor = palette.forestGreenLight
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -527,10 +505,10 @@ fun CalibrationScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = ForestGreenLight,
-                                unfocusedBorderColor = TextSecondary.copy(alpha = 0.5f),
-                                focusedLabelColor = ForestGreenLight,
-                                cursorColor = ForestGreenLight
+                                focusedBorderColor = palette.forestGreenLight,
+                                unfocusedBorderColor = colors.onSurfaceVariant.copy(alpha = 0.5f),
+                                focusedLabelColor = palette.forestGreenLight,
+                                cursorColor = palette.forestGreenLight
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -538,11 +516,53 @@ fun CalibrationScreen(
                         if (showError) {
                             Text(
                                 text = errorMessage,
-                                color = ErrorRed,
+                                color = palette.errorRed,
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.padding(top = 8.dp)
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Detection tiles — 1 = full image",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(1, 4, 9, 16).forEach { n ->
+                                FilterChip(
+                                    selected = tilesChoice == n,
+                                    onClick = {
+                                        tilesChoice = n
+                                        modelThreshold = defaultThresholdForTiles(n)
+                                    },
+                                    label = { Text("$n") },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = palette.forestGreen.copy(alpha = 0.35f),
+                                        selectedLabelColor = colors.onBackground,
+                                        containerColor = colors.surfaceVariant,
+                                        labelColor = colors.onSurfaceVariant
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Model threshold: ${modelThreshold.roundToInt()}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = colors.onSurfaceVariant
+                        )
+                        Slider(
+                            value = modelThreshold,
+                            onValueChange = { modelThreshold = it.coerceIn(0f, 100f) },
+                            valueRange = 0f..100f
+                        )
 
                         Spacer(modifier = Modifier.height(16.dp))
 
@@ -558,10 +578,12 @@ fun CalibrationScreen(
                                     dragPreviewPoint = null
                                     distanceInput = ""
                                     logLengthInput = ""
+                                    tilesChoice = 4
+                                    modelThreshold = defaultThresholdForTiles(4)
                                     showError = false
                                 },
                                 colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = TextSecondary
+                                    contentColor = colors.onSurfaceVariant
                                 )
                             ) {
                                 Text("Clear Points")
@@ -591,6 +613,8 @@ fun CalibrationScreen(
                                             } else {
                                                 SessionData.pixelPerCm = pxPerCm
                                                 SessionData.logLengthMeters = logLength
+                                                SessionData.tilesCount = tilesChoice
+                                                SessionData.modelThresholdPercent = modelThreshold.roundToInt().coerceIn(0, 100)
                                                 try {
                                                     onAnalyze()
                                                 } catch (_: Throwable) {
@@ -602,7 +626,7 @@ fun CalibrationScreen(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = ForestGreen
+                                    containerColor = palette.forestGreen
                                 ),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
@@ -614,7 +638,7 @@ fun CalibrationScreen(
                             text = "Tap on the image above to place two reference points for scale calibration.\n\n" +
                                     "Choose two points whose real-world distance you know (e.g. a ruler, a known log diameter).",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary
+                            color = colors.onSurfaceVariant
                         )
                     }
                 }

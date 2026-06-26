@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,9 +39,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -49,20 +52,20 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.algerianwood.app.ui.theme.DarkForest
-import com.algerianwood.app.ui.theme.DarkForestCard
-import com.algerianwood.app.ui.theme.DarkForestSurface
-import com.algerianwood.app.ui.theme.ErrorRed
-import com.algerianwood.app.ui.theme.ForestGreen
-import com.algerianwood.app.ui.theme.ForestGreenLight
-import com.algerianwood.app.ui.theme.PaleGreen
-import com.algerianwood.app.ui.theme.TextPrimary
-import com.algerianwood.app.ui.theme.TextSecondary
-import com.algerianwood.app.ui.theme.WoodBrownDark
 import com.algerianwood.app.R
+import com.algerianwood.app.data.LocalUserRepository
+import com.algerianwood.app.data.SessionData
+import com.algerianwood.app.ui.theme.LocalAppPalette
 
 @Composable
-fun LoginScreen(onLoginSuccess: () -> Unit) {
+fun LoginScreen(
+    onLoginSuccess: () -> Unit,
+    onCreateAccount: () -> Unit
+) {
+    val palette = LocalAppPalette.current
+    val colors = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val userRepository = remember(context) { LocalUserRepository(context) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -73,14 +76,15 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
 
     fun attemptLogin() {
         focusManager.clearFocus()
-        if (username == "admin" && password == "admin") {
+        if (userRepository.validateCredentials(username.trim(), password)) {
+            SessionData.currentUsername = username.trim()
             onLoginSuccess()
         } else {
             showError = true
             errorMessage = if (username.isBlank() || password.isBlank()) {
                 "Please enter both username and password"
             } else {
-                "Invalid credentials. Use admin / admin"
+                "Invalid username or password"
             }
         }
     }
@@ -89,13 +93,23 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        DarkForest,
-                        DarkForestSurface,
-                        WoodBrownDark.copy(alpha = 0.3f)
+                brush = if (palette.isLight) {
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            palette.background,
+                            palette.surface,
+                            palette.sandBrown.copy(alpha = 0.35f)
+                        )
                     )
-                )
+                } else {
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            colors.background,
+                            colors.surface,
+                            palette.woodBrownDark.copy(alpha = 0.3f)
+                        )
+                    )
+                }
             )
             .systemBarsPadding()
             .imePadding()
@@ -121,14 +135,14 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             Text(
                 text = "ARWood Tech",
                 style = MaterialTheme.typography.displayLarge,
-                color = PaleGreen,
+                color = colors.onBackground,
                 fontWeight = FontWeight.Bold
             )
 
             Text(
                 text = "Wood Volume Measurement",
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextSecondary,
+                color = palette.textSecondary,
                 textAlign = TextAlign.Center
             )
 
@@ -139,7 +153,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = DarkForestCard.copy(alpha = 0.85f)
+                    containerColor = colors.surface
                 ),
                 shape = RoundedCornerShape(20.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
@@ -153,7 +167,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     Text(
                         text = "Sign In",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = TextPrimary,
+                        color = colors.onBackground,
                         modifier = Modifier.padding(bottom = 24.dp)
                     )
 
@@ -166,10 +180,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ForestGreenLight,
-                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.5f),
-                            focusedLabelColor = ForestGreenLight,
-                            cursorColor = ForestGreenLight
+                            focusedBorderColor = palette.forestGreen,
+                            unfocusedBorderColor = palette.textSecondary.copy(alpha = 0.45f),
+                            focusedLabelColor = palette.forestGreenDark,
+                            unfocusedLabelColor = palette.textSecondary,
+                            cursorColor = palette.forestGreen
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -200,10 +215,11 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         ),
                         keyboardActions = KeyboardActions(onDone = { attemptLogin() }),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ForestGreenLight,
-                            unfocusedBorderColor = TextSecondary.copy(alpha = 0.5f),
-                            focusedLabelColor = ForestGreenLight,
-                            cursorColor = ForestGreenLight
+                            focusedBorderColor = palette.forestGreen,
+                            unfocusedBorderColor = palette.textSecondary.copy(alpha = 0.45f),
+                            focusedLabelColor = palette.forestGreenDark,
+                            unfocusedLabelColor = palette.textSecondary,
+                            cursorColor = palette.forestGreen
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -213,7 +229,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = errorMessage,
-                            color = ErrorRed,
+                            color = palette.errorRed,
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center
                         )
@@ -227,14 +243,20 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = ForestGreen),
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.forestGreen),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             "Login",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            color = colors.onPrimary
                         )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(onClick = onCreateAccount) {
+                        Text("Create account", color = palette.forestGreenDark)
                     }
                 }
             }
@@ -244,7 +266,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             Text(
                 text = "v1.0.0 — Prototype",
                 style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary.copy(alpha = 0.6f)
+                color = palette.textSecondary.copy(alpha = 0.75f)
             )
         }
     }

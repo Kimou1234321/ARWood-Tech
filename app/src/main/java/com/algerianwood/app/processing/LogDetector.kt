@@ -40,7 +40,15 @@ class LogDetector(private val context: Context) {
     data class DetectionResult(
         val logs: List<DetectedLog>,
         val maskBitmap: Bitmap,
-        val yoloDetections: List<YoloDetection>
+        val yoloDetections: List<YoloDetection>,
+        val tileBounds: List<TileBounds> = emptyList()
+    )
+
+    data class TileBounds(
+        val left: Int,
+        val top: Int,
+        val right: Int,
+        val bottom: Int
     )
 
     private data class Candidate(
@@ -53,8 +61,8 @@ class LogDetector(private val context: Context) {
     )
 
     private companion object {
-        private const val MODEL_FILE_NAME = "log_detector.tflite"
-        private const val CANONICAL_ASSET_PATH = "models/log_detector.tflite"
+        private const val MODEL_FILE_NAME = "log_detector_V2.tflite"
+        private const val CANONICAL_ASSET_PATH = "models/log_detector_V2.tflite"
         private const val INPUT_SIZE = 640
         private const val NUM_CANDIDATES = 8400
         private const val NUM_FEATURES = 37
@@ -82,7 +90,10 @@ class LogDetector(private val context: Context) {
         }
     }
 
-    fun detectAnalysis(original: Bitmap): DetectionResult {
+    fun detectAnalysis(
+        original: Bitmap,
+        confidenceThreshold: Float = CONFIDENCE_THRESHOLD
+    ): DetectionResult {
         if (original.isRecycled || original.width <= 0 || original.height <= 0) {
             val emptyMask = Bitmap.createBitmap(max(1, original.width), max(1, original.height), Bitmap.Config.ARGB_8888)
             return DetectionResult(emptyList(), emptyMask, emptyList())
@@ -111,12 +122,13 @@ class LogDetector(private val context: Context) {
         val protoArray = FloatArray(MASK_H * MASK_W * MASK_COEFF_COUNT)
         output1Buffer.asFloatBuffer().get(protoArray)
 
-        val initialCandidates = parseCandidates(detArray, protoArray)
+        val initialCandidates = parseCandidates(detArray, protoArray, confidenceThreshold)
         val nmsCandidates = runNms(initialCandidates)
 
         val maskPixels = IntArray(original.width * original.height) { Color.BLACK }
         val logs = mutableListOf<DetectedLog>()
         val yoloDetections = mutableListOf<YoloDetection>()
+        val protoScratch = FloatArray(MASK_W * MASK_H)
 
         val scaleX = original.width.toFloat() / INPUT_SIZE.toFloat()
         val scaleY = original.height.toFloat() / INPUT_SIZE.toFloat()
@@ -137,33 +149,41 @@ class LogDetector(private val context: Context) {
             val protoRight = ceil(rightModel * MASK_W / INPUT_SIZE.toFloat()).toInt().coerceIn(protoLeft + 1, MASK_W)
             val protoBottom = ceil(bottomModel * MASK_H / INPUT_SIZE.toFloat()).toInt().coerceIn(protoTop + 1, MASK_H)
 
-            var protoAreaCount = rasterizeMaskForCandidate(
+            fillProtoSigmoidScratch(
+                scratch = protoScratch,
                 candidate = candidate,
                 protoArray = protoArray,
                 protoLeft = protoLeft,
                 protoTop = protoTop,
                 protoRight = protoRight,
-                protoBottom = protoBottom,
+                protoBottom = protoBottom
+            )
+
+            var painted = compositeBilinearScratchIntoMask(
+                scratch = protoScratch,
                 threshold = MASK_THRESHOLD,
                 outputPixels = maskPixels,
                 outputWidth = original.width,
-                outputHeight = original.height
+                outputHeight = original.height,
+                left = left,
+                top = top,
+                right = right,
+                bottom = bottom
             )
-            if (protoAreaCount == 0) {
-                protoAreaCount = rasterizeMaskForCandidate(
-                    candidate = candidate,
-                    protoArray = protoArray,
-                    protoLeft = protoLeft,
-                    protoTop = protoTop,
-                    protoRight = protoRight,
-                    protoBottom = protoBottom,
+            if (painted == 0) {
+                painted = compositeBilinearScratchIntoMask(
+                    scratch = protoScratch,
                     threshold = MASK_THRESHOLD_RELAXED,
                     outputPixels = maskPixels,
                     outputWidth = original.width,
-                    outputHeight = original.height
+                    outputHeight = original.height,
+                    left = left,
+                    top = top,
+                    right = right,
+                    bottom = bottom
                 )
             }
-            if (protoAreaCount == 0) {
+            if (painted == 0) {
                 // Conservative fallback: keep a visible marker inside accepted detection box.
                 val cx = ((left + right) / 2f).toInt()
                 val cy = ((top + bottom) / 2f).toInt()
@@ -174,13 +194,10 @@ class LogDetector(private val context: Context) {
                         maskPixels[rowOffset + xx] = Color.WHITE
                     }
                 }
-                protoAreaCount = max(1, rr * rr)
+                painted = max(1, rr * rr)
             }
 
-            val approxMaskArea = max(
-                1,
-                (protoAreaCount * (original.width.toFloat() / MASK_W) * (original.height.toFloat() / MASK_H)).toInt()
-            )
+            val approxMaskArea = max(1, painted)
             val radius = sqrt(approxMaskArea / PI.toFloat()).coerceAtLeast(MIN_RADIUS_PX)
 
             logs.add(
@@ -207,7 +224,11 @@ class LogDetector(private val context: Context) {
         return DetectionResult(logs, maskBitmap, yoloDetections)
     }
 
-    private fun parseCandidates(detArray: FloatArray, protoArray: FloatArray): List<Candidate> {
+    private fun parseCandidates(
+        detArray: FloatArray,
+        protoArray: FloatArray,
+        confidenceThreshold: Float
+    ): List<Candidate> {
         val candidates = ArrayList<Candidate>(256)
         var minRawConf = Float.POSITIVE_INFINITY
         var maxRawConf = Float.NEGATIVE_INFINITY
@@ -228,7 +249,7 @@ class LogDetector(private val context: Context) {
         for (i in 0 until NUM_CANDIDATES) {
             val rawConf = detArray[4 * NUM_CANDIDATES + i]
             val conf = if (useSigmoidForConfidence) sigmoid(rawConf) else rawConf
-            if (conf < CONFIDENCE_THRESHOLD) continue
+            if (conf < confidenceThreshold) continue
 
             var cx = detArray[i]
             var cy = detArray[NUM_CANDIDATES + i]
@@ -441,19 +462,16 @@ class LogDetector(private val context: Context) {
         )
     }
 
-    private fun rasterizeMaskForCandidate(
+    private fun fillProtoSigmoidScratch(
+        scratch: FloatArray,
         candidate: Candidate,
         protoArray: FloatArray,
         protoLeft: Int,
         protoTop: Int,
         protoRight: Int,
         protoBottom: Int,
-        threshold: Float,
-        outputPixels: IntArray,
-        outputWidth: Int,
-        outputHeight: Int
-    ): Int {
-        var protoAreaCount = 0
+    ) {
+        scratch.fill(0f)
         for (py in protoTop until protoBottom) {
             for (px in protoLeft until protoRight) {
                 var sum = 0f
@@ -461,22 +479,60 @@ class LogDetector(private val context: Context) {
                 for (k in 0 until MASK_COEFF_COUNT) {
                     sum += candidate.coeffs[k] * protoArray[base + k]
                 }
-                if (sigmoid(sum) >= threshold) {
-                    protoAreaCount++
-                    val ox0 = floor(px * outputWidth / MASK_W.toFloat()).toInt().coerceIn(0, outputWidth - 1)
-                    val oy0 = floor(py * outputHeight / MASK_H.toFloat()).toInt().coerceIn(0, outputHeight - 1)
-                    val ox1 = ceil((px + 1) * outputWidth / MASK_W.toFloat()).toInt().coerceIn(ox0 + 1, outputWidth)
-                    val oy1 = ceil((py + 1) * outputHeight / MASK_H.toFloat()).toInt().coerceIn(oy0 + 1, outputHeight)
-                    for (oy in oy0 until oy1) {
-                        val rowOffset = oy * outputWidth
-                        for (ox in ox0 until ox1) {
-                            outputPixels[rowOffset + ox] = Color.WHITE
-                        }
-                    }
+                scratch[py * MASK_W + px] = sigmoid(sum)
+            }
+        }
+    }
+
+    /** Sample prototype mask probabilities with bilinear interpolation (pixel centers → 160-grid), then threshold. */
+    private fun compositeBilinearScratchIntoMask(
+        scratch: FloatArray,
+        threshold: Float,
+        outputPixels: IntArray,
+        outputWidth: Int,
+        outputHeight: Int,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+    ): Int {
+        var painted = 0
+        val ow = outputWidth.toFloat().coerceAtLeast(1f)
+        val oh = outputHeight.toFloat().coerceAtLeast(1f)
+        val wm = MASK_W.toFloat().coerceAtLeast(1f)
+        val hm = MASK_H.toFloat().coerceAtLeast(1f)
+
+        for (oy in top until bottom) {
+            val rowOffset = oy * outputWidth
+            val gy = ((oy + 0.5f) / oh).coerceIn(0f, 1f) * hm
+            for (ox in left until right) {
+                val gx = ((ox + 0.5f) / ow).coerceIn(0f, 1f) * wm
+                val v = bilinearSample(scratch, MASK_W, MASK_H, gx, gy)
+                if (v >= threshold) {
+                    outputPixels[rowOffset + ox] = Color.WHITE
+                    painted++
                 }
             }
         }
-        return protoAreaCount
+        return painted
+    }
+
+    private fun bilinearSample(grid: FloatArray, wMask: Int, hMask: Int, gxIn: Float, gyIn: Float): Float {
+        val gx = gxIn.coerceIn(0f, wMask.toFloat())
+        val gy = gyIn.coerceIn(0f, hMask.toFloat())
+        val x0 = floor(gx.toDouble()).toInt().coerceIn(0, wMask - 1)
+        val y0 = floor(gy.toDouble()).toInt().coerceIn(0, hMask - 1)
+        val x1 = min(x0 + 1, wMask - 1)
+        val y1 = min(y0 + 1, hMask - 1)
+        val tx = gx - x0
+        val ty = gy - y0
+        val v00 = grid[y0 * wMask + x0]
+        val v10 = grid[y0 * wMask + x1]
+        val v01 = grid[y1 * wMask + x0]
+        val v11 = grid[y1 * wMask + x1]
+        val a = v00 * (1f - tx) + v10 * tx
+        val b = v01 * (1f - tx) + v11 * tx
+        return a * (1f - ty) + b * ty
     }
 
     private fun sigmoid(x: Float): Float {

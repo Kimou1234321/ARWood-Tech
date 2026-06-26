@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -15,6 +16,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +36,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,9 +49,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -59,12 +67,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.algerianwood.app.data.SessionData
-import com.algerianwood.app.ui.theme.DarkForest
-import com.algerianwood.app.ui.theme.DarkForestSurface
-import com.algerianwood.app.ui.theme.ForestGreen
-import com.algerianwood.app.ui.theme.ForestGreenLight
-import com.algerianwood.app.ui.theme.TextPrimary
-import com.algerianwood.app.ui.theme.TextSecondary
+import com.algerianwood.app.ui.theme.LocalAppPalette
 import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -98,11 +101,13 @@ fun CameraScreen(
     if (hasCameraPermission) {
         CameraContent(onImageCaptured = onImageCaptured, onBack = onBack)
     } else {
+        val palette = LocalAppPalette.current
+        val colors = MaterialTheme.colorScheme
         // ── Permission denied UI ──
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(DarkForest)
+                .background(colors.background)
                 .systemBarsPadding(),
             contentAlignment = Alignment.Center
         ) {
@@ -113,33 +118,33 @@ fun CameraScreen(
                 Icon(
                     imageVector = Icons.Filled.CameraAlt,
                     contentDescription = null,
-                    tint = TextSecondary,
+                    tint = colors.onSurfaceVariant,
                     modifier = Modifier.size(64.dp)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     text = "Camera Permission Required",
                     style = MaterialTheme.typography.titleLarge,
-                    color = TextPrimary,
+                    color = colors.onBackground,
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "Please grant camera permission to take photos of logs",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
+                    color = colors.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                    colors = ButtonDefaults.buttonColors(containerColor = ForestGreen)
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.forestGreen)
                 ) {
                     Text("Grant Permission")
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 TextButton(onClick = onBack) {
-                    Text("Go Back", color = TextSecondary)
+                    Text("Go Back", color = colors.onSurfaceVariant)
                 }
             }
         }
@@ -155,31 +160,41 @@ private fun CameraContent(
 
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val imageCapture = remember {
-        ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .build()
-    }
+    val palette = LocalAppPalette.current
+    val colors = MaterialTheme.colorScheme
 
     val previewView = remember { PreviewView(context) }
     var isCapturing by remember { mutableStateOf(false) }
     var captureError by remember { mutableStateOf<String?>(null) }
+    var boundCamera by remember { mutableStateOf<Camera?>(null) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
+    var flashEnabled by remember { mutableStateOf(true) }
+    var imageCaptureUseCase by remember { mutableStateOf<ImageCapture?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(flashEnabled) {
         try {
             val cameraProvider = context.getCameraProvider()
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            val capture = ImageCapture.Builder()
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setFlashMode(
+                    if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+                )
+                .build()
+            imageCaptureUseCase = capture
 
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(
+            val camera = cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
                 preview,
-                imageCapture
+                capture
             )
+            boundCamera = camera
+            zoomRatio = camera.cameraInfo.zoomState.value?.zoomRatio ?: 1f
         } catch (e: Exception) {
             Log.e("CameraScreen", "Camera bind failed", e)
             captureError = "Could not start camera: ${e.message}"
@@ -187,10 +202,31 @@ private fun CameraContent(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Camera preview
+        // Camera preview with pinch zoom
         AndroidView(
             factory = { previewView },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(boundCamera) {
+                    val camera = boundCamera ?: return@pointerInput
+                    awaitEachGesture {
+                        do {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.size >= 2) {
+                                val zoomChange = event.calculateZoom()
+                                val zoomState = camera.cameraInfo.zoomState.value
+                                val minZoom = zoomState?.minZoomRatio ?: 1f
+                                val maxZoom = zoomState?.maxZoomRatio ?: 1f
+                                val current = zoomState?.zoomRatio ?: zoomRatio
+                                val newRatio = (current * zoomChange).coerceIn(minZoom, maxZoom)
+                                camera.cameraControl.setZoomRatio(newRatio)
+                                zoomRatio = newRatio
+                                pressed.forEach { it.consume() }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }
         )
 
         // ── Top bar ──
@@ -206,15 +242,35 @@ private fun CameraContent(
                 modifier = Modifier
                     .size(40.dp)
                     .background(
-                        color = DarkForestSurface.copy(alpha = 0.78f),
+                        color = colors.surface.copy(alpha = 0.78f),
                         shape = CircleShape
                     )
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "Close",
-                    tint = TextPrimary
+                    tint = colors.onBackground
                 )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            if (boundCamera?.cameraInfo?.hasFlashUnit() == true) {
+                IconButton(
+                    onClick = { flashEnabled = !flashEnabled },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            color = colors.surface.copy(alpha = 0.78f),
+                            shape = CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (flashEnabled) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+                        contentDescription = if (flashEnabled) "Flash on" else "Flash off",
+                        tint = if (flashEnabled) palette.goldenAmber else colors.onBackground
+                    )
+                }
             }
         }
 
@@ -224,10 +280,10 @@ private fun CameraContent(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .padding(32.dp)
-                    .background(DarkForest.copy(alpha = 0.82f), CircleShape)
+                    .background(colors.background.copy(alpha = 0.82f), CircleShape)
                     .padding(16.dp)
             ) {
-                Text(text = error, color = TextPrimary, textAlign = TextAlign.Center)
+                Text(text = error, color = colors.onBackground, textAlign = TextAlign.Center)
             }
         }
 
@@ -238,7 +294,7 @@ private fun CameraContent(
                 .fillMaxWidth()
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, DarkForest.copy(alpha = 0.7f))
+                        colors = listOf(Color.Transparent, colors.background.copy(alpha = 0.7f))
                     )
                 )
                 .navigationBarsPadding()
@@ -247,9 +303,9 @@ private fun CameraContent(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Normal Photo",
+                text = String.format("%.1fx — Pinch to zoom", zoomRatio),
                 style = MaterialTheme.typography.labelLarge,
-                color = TextPrimary,
+                color = colors.onBackground,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
@@ -258,6 +314,7 @@ private fun CameraContent(
             IconButton(
                 onClick = {
                     if (isCapturing) return@IconButton
+                    val capture = imageCaptureUseCase ?: return@IconButton
                     isCapturing = true
                     captureError = null
 
@@ -267,7 +324,7 @@ private fun CameraContent(
                     )
                     val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
-                    imageCapture.takePicture(
+                    capture.takePicture(
                         outputOptions,
                         ContextCompat.getMainExecutor(context),
                         object : ImageCapture.OnImageSavedCallback {
@@ -308,10 +365,10 @@ private fun CameraContent(
                 Box(
                     modifier = Modifier
                         .size(76.dp)
-                        .border(4.dp, TextPrimary, CircleShape)
+                        .border(4.dp, colors.onBackground, CircleShape)
                         .padding(6.dp)
                         .background(
-                            if (isCapturing) DarkForestSurface else PaleCapture,
+                            if (isCapturing) colors.surface else PaleCapture,
                             CircleShape
                         )
                 )
@@ -323,10 +380,10 @@ private fun CameraContent(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(DarkForest.copy(alpha = 0.58f)),
+                    .background(colors.background.copy(alpha = 0.58f)),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(color = ForestGreenLight)
+                CircularProgressIndicator(color = palette.forestGreenLight)
             }
         }
     }
